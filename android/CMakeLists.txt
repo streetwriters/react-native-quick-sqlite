@@ -1,20 +1,33 @@
 cmake_minimum_required(VERSION 3.13)
 project(RNQuickSQLite)
 
+include(FetchContent)
+
 set (CMAKE_VERBOSE_MAKEFILE ON)
 set (CMAKE_CXX_STANDARD 17)
 
 add_definitions(
-  ${SQLITE_FLAGS}
+  ${SQLITE_FLAGS} -DSQLITE_CORE
 )
 
 include_directories(
   ../cpp
 )
 
+FetchContent_Declare(
+        lexbor_source
+        GIT_REPOSITORY https://github.com/lexbor/lexbor.git
+        GIT_TAG        v2.4.0
+)
+
+FetchContent_MakeAvailable(lexbor_source)
+
+
 file(GLOB_RECURSE cpp_files RELATIVE ${CMAKE_SOURCE_DIR}
   "../cpp/**.c"
   "../cpp/**.cpp"
+  "../better-trigram/better-trigram.c"
+  "../sqlite3-fts5-html/fts5-html.c"
   "cpp-adapter.cpp"
 )
 
@@ -39,6 +52,7 @@ target_link_libraries(
   android
   fbjni::fbjni
   ReactAndroid::jsi
+  lexbor
 )
 
 # https://github.com/react-native-community/discussions-and-proposals/discussions/816

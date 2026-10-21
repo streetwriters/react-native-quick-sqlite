@@ -20,6 +20,9 @@
 using namespace std;
 using namespace facebook;
 
+extern "C" int sqlite3Fts5BetterTrigramInit(sqlite3 *db);
+extern "C" int sqlite3Fts5HtmlInit(sqlite3 *db);
+
 map<string, sqlite3 *> dbMap = map<string, sqlite3 *>();
 
 bool folder_exists(const std::string &foldername)
@@ -90,12 +93,18 @@ SQLiteOPResult sqliteOpenDb(string const dbName, string const docPath)
   int exit = 0;
   exit = sqlite3_open_v2(dbPath.c_str(), &db, sqlOpenFlags, nullptr);
 
+  if (exit == SQLITE_OK)
+  {
+    
+      sqlite3Fts5BetterTrigramInit(db);
+      sqlite3Fts5HtmlInit(db);
+  }
+
   if (exit != SQLITE_OK)
   {
     return SQLiteOPResult{
-      .type = SQLiteError,
-      .errorMessage = sqlite3_errmsg(db)
-    };
+        .type = SQLiteError,
+        .errorMessage = sqlite3_errmsg(db)};
   }
   else
   {
@@ -103,9 +112,8 @@ SQLiteOPResult sqliteOpenDb(string const dbName, string const docPath)
   }
 
   return SQLiteOPResult{
-    .type = SQLiteOk,
-    .rowsAffected = 0
-  };
+      .type = SQLiteOk,
+      .rowsAffected = 0};
 }
 
 SQLiteOPResult sqliteCloseDb(string const dbName)

@@ -1,0 +1,6 @@
+*.dylib
+*.dSYM
+.vscode
+test.sql.*
+deps
+dist

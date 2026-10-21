@@ -12,16 +12,23 @@ Pod::Spec.new do |s|
   s.authors      = package["author"]
 
   s.platforms    = { :ios => min_ios_version_supported, :visionos => "1.0" }
-  s.source       = { :git => "https://github.com/margelo/react-native-quick-sqlite.git", :tag => "#{s.version}" }
+  s.source       = { :git => "https://github.com/streetwriters/react-native-quick-sqlite.git", :tag => "#{s.version}" }
 
     s.header_mappings_dir = "cpp"
-    s.source_files = "ios/**/*.{h,hpp,m,mm}", "cpp/**/*.{h,cpp,c}"
+    s.source_files = "ios/**/*.{h,hpp,m,mm}", "cpp/**/*.{h,cpp,c}", "better-trigram/better-trigram.c", "sqlite3-fts5-html/fts5-html.c"
 
   s.pod_target_xcconfig = {
     :GCC_PREPROCESSOR_DEFINITIONS => "HAVE_FULLFSYNC=1",
     :WARNING_CFLAGS => "-Wno-shorten-64-to-32 -Wno-comma -Wno-unreachable-code -Wno-conditional-uninitialized -Wno-deprecated-declarations",
     :USE_HEADERMAP => "No"
   }
+
+  s.subspec 'lexbor' do |ss|
+      ss.xcconfig = { 'USER_HEADER_SEARCH_PATHS' => '"${PODS_SRC_ROOT}/lexbor/**/*.{h}' }
+      ss.source_files               = "lexbor/**/*.{h,c}"
+      ss.exclude_files              = "lexbor/ports/windows_nt/**/*"
+      ss.header_dir = "lexbor"
+  end
 
   # Use install_modules_dependencies helper to install the dependencies if React Native version >=0.71.0.
   # See https://github.com/facebook/react-native/blob/febf6b7f33fdb4904669f99d795eba4c0f95d7bf/scripts/cocoapods/new_architecture.rb#L79.

@@ -9,6 +9,7 @@
 #include <string>
 #include "macros.h"
 #include <iostream>
+#include <chrono>
 
 using namespace std;
 using namespace facebook;
@@ -183,7 +184,11 @@ void install(jsi::Runtime &rt, std::shared_ptr<react::CallInvoker> jsCallInvoker
     vector<QuickValue> params;
     if(count == 3) {
       const jsi::Value &originalParams = args[2];
+        auto start_time = std::chrono::high_resolution_clock::now();
       jsiQueryArgumentsToSequelParam(rt, originalParams, &params);
+
+
+
     }
 
     vector<map<string, QuickValue>> results;
@@ -191,7 +196,18 @@ void install(jsi::Runtime &rt, std::shared_ptr<react::CallInvoker> jsCallInvoker
 
     // Converting results into a JSI Response
     try {
+        const jsi::Value &originalParams = args[2];
+        auto start_time = std::chrono::high_resolution_clock::now();
       auto status = sqliteExecute(dbName, query, &params, &results, &metadata);
+
+        auto end_time = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+
+#ifdef ANDROID
+        __android_log_print(ANDROID_LOG_INFO,"QuickSQLite", "took: %s", query.c_str());
+                            __android_log_print(ANDROID_LOG_INFO, "QuickSQLite", "jsiQueryArgumentsToSequelParam took: %lld microseconds (%.3f ms)",
+                            (long long)duration.count(), duration.count() / 1000.0);
+#endif
 
       if(status.type == SQLiteError) {
 //        throw std::runtime_error(status.errorMessage);

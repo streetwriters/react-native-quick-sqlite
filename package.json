@@ -24,6 +24,9 @@
     "android",
     "ios",
     "cpp",
+    "better-trigram",
+    "sqlite3-fts5-html",
+    "lexbor",
     "react-native-quick-sqlite.podspec",
     "!lib/typescript/example",
     "!android/build",
@@ -49,7 +52,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/margelo/react-native-quick-sqlite.git"
+    "url": "git+https://github.com/streetwriters/react-native-quick-sqlite.git"
   },
   "author": "Marc Rousavy <me@mrousavy.com> (https://github.com/mrousavy)",
   "license": "MIT",

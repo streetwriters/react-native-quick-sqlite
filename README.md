@@ -1,17 +1,31 @@
-## 🚧 `react-native-quick-sqlite` (DEPRECATED)
+# react-native-quick-sqlite
 
-> [!IMPORTANT]
-> `react-native-quick-sqlite` has been deprecated in favor of [`react-native-nitro-sqlite`](https://github.com/margelo/react-native-nitro-sqlite).
->
+Fast, encrypted SQLite with JSI bindings for React Native, maintained by [Streetwriters](https://github.com/streetwriters) for [Notesnook](https://notesnook.com).
 
-Please go to the [`react-native-nitro-sqlite`](https://github.com/margelo/react-native-nitro-sqlite) repository instead.
+## Upstream Origin
 
-This is our new [Nitro module](https://nitro.margelo.com/) implementation of this library.
+This repository is forked and migrated from the original `react-native-quick-sqlite` codebase:
+- **Upstream tree:** [`https://github.com/margelo/react-native-nitro-sqlite/tree/react-native-quick-sqlite`](https://github.com/margelo/react-native-nitro-sqlite/tree/react-native-quick-sqlite)
+- **Original authors:** Marc Rousavy & Christoph Pader ([Margelo](https://github.com/margelo))
 
-Nitro modules is a React Native library that let's us make the codebase more readable and easier to maintain. This way, we're able to fix bugs faster and implement new features! 🚀
+## Features & Notesnook Customizations
 
-### Future releases
+In addition to standard `react-native-quick-sqlite` capabilities, this distribution contains custom extensions required for Notesnook:
 
-From major version `9.0.0` on, this library will be shipped in the NPM package `react-native-nitro-sqlite`. New features are going to be implemented there.
+- **SQLite3 Multiple Ciphers**: Transparent database encryption supporting SQLCipher (AES-256), ChaCha20-Poly1305, and other encryption algorithms.
+- **FTS5 `better-trigram`**: Enhanced trigram tokenizer with better multi-language and CJK tokenization support.
+- **FTS5 `sqlite3-fts5-html`**: Custom HTML stripper tokenizer powered by [Lexbor](https://github.com/lexbor/lexbor), enabling direct and fast full-text indexing of rich text note content.
 
-We will still provide bug fixes to `react-native-quick-sqlite@8.x.x` for the coming weeks/months.
+## Installation
+
+```bash
+npm install github:streetwriters/react-native-quick-sqlite
+```
+
+## Example App
+
+An example application using React Native 0.82.1 is available in the [`example/`](./example) directory to run and test all library features.
+
+## License
+
+MIT © Marc Rousavy & Christoph Pader, Streetwriters (Private) Limited

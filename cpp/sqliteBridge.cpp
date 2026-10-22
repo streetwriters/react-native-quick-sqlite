@@ -23,6 +23,33 @@ using namespace facebook;
 extern "C" int sqlite3Fts5BetterTrigramInit(sqlite3 *db);
 extern "C" int sqlite3Fts5HtmlInit(sqlite3 *db);
 
+static void sqliteNaturalKeyFunc(sqlite3_context *context, int argc, sqlite3_value **argv) {
+  if (argc == 0 || sqlite3_value_type(argv[0]) == SQLITE_NULL) {
+    sqlite3_result_null(context);
+    return;
+  }
+  const unsigned char *text = sqlite3_value_text(argv[0]);
+  if (!text) {
+    sqlite3_result_text(context, "", 0, SQLITE_STATIC);
+    return;
+  }
+  string result;
+  const char *p = reinterpret_cast<const char*>(text);
+  while (*p) {
+    if (*p >= '0' && *p <= '9') {
+      const char *start = p;
+      while (*p >= '0' && *p <= '9') p++;
+      size_t len = p - start;
+      if (len < 10) result.append(10 - len, '0');
+      result.append(start, len);
+    } else {
+      result.push_back(*p);
+      p++;
+    }
+  }
+  sqlite3_result_text(context, result.c_str(), static_cast<int>(result.length()), SQLITE_TRANSIENT);
+}
+
 map<string, sqlite3 *> dbMap = map<string, sqlite3 *>();
 
 bool folder_exists(const std::string &foldername)
@@ -95,9 +122,9 @@ SQLiteOPResult sqliteOpenDb(string const dbName, string const docPath)
 
   if (exit == SQLITE_OK)
   {
-    
       sqlite3Fts5BetterTrigramInit(db);
       sqlite3Fts5HtmlInit(db);
+      sqlite3_create_function(db, "natural_key", 1, SQLITE_UTF8, nullptr, sqliteNaturalKeyFunc, nullptr, nullptr);
   }
 
   if (exit != SQLITE_OK)

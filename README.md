@@ -15,6 +15,7 @@ In addition to standard `react-native-quick-sqlite` capabilities, this distribut
 - **SQLite3 Multiple Ciphers**: Transparent database encryption supporting SQLCipher (AES-256), ChaCha20-Poly1305, and other encryption algorithms.
 - **FTS5 `better-trigram`**: Enhanced trigram tokenizer with better multi-language and CJK tokenization support.
 - **FTS5 `sqlite3-fts5-html`**: Custom HTML stripper tokenizer powered by [Lexbor](https://github.com/lexbor/lexbor), enabling direct and fast full-text indexing of rich text note content.
+- **`natural_key` Function**: Built-in deterministic SQLite function for natural sorting of alphanumeric titles and strings (e.g. `Item 2` before `Item 10`).
 
 ## Installation
 

@@ -189,6 +189,43 @@ export default function App() {
       db.close();
     });
 
+    // Test 6: natural_key Sorting Function
+    await runTest('natural_key Sorting Function', () => {
+      const db = open({ name: 'natural_key_test.db' });
+      db.execute('DROP TABLE IF EXISTS items;');
+      db.execute('CREATE TABLE items (id INTEGER PRIMARY KEY, title TEXT);');
+      db.execute(
+        "INSERT INTO items (title) VALUES ('Item 10'), ('Item 2'), ('Item 1'), ('Item 20');"
+      );
+
+      // Verify natural_key() function exists and produces expected natural sort order
+      const res = db.execute(
+        'SELECT title FROM items ORDER BY natural_key(title) ASC;'
+      );
+      if (!res.rows || res.rows.length !== 4) {
+        throw new Error('natural_key query failed to return expected rows');
+      }
+
+      const titles = [
+        res.rows.item(0).title,
+        res.rows.item(1).title,
+        res.rows.item(2).title,
+        res.rows.item(3).title,
+      ];
+
+      // In natural sort order: Item 1, Item 2, Item 10, Item 20
+      // (Alphabetical would be: Item 1, Item 10, Item 2, Item 20)
+      if (
+        titles[0] !== 'Item 1' ||
+        titles[1] !== 'Item 2' ||
+        titles[2] !== 'Item 10' ||
+        titles[3] !== 'Item 20'
+      ) {
+        throw new Error(`natural_key produced incorrect sort order: ${titles.join(', ')}`);
+      }
+      db.close();
+    });
+
     setResults(testResults);
     setRunning(false);
   };

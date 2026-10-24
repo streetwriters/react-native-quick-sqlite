@@ -6,65 +6,44 @@
 //
 
 #include "JSIHelper.h"
+#include <algorithm>
+#include <cmath>
 
 using namespace std;
 using namespace facebook;
 
-QuickValue createNullQuickValue()
+namespace
 {
-  return QuickValue{
-    .dataType = NULL_VALUE};
-}
+/**
+ * Wraps a std::vector's storage in the jsi::MutableBuffer an ArrayBuffer needs,
+ * so the bytes are handed to JS without a second copy.
+ */
+class VectorBuffer : public jsi::MutableBuffer
+{
+public:
+  explicit VectorBuffer(std::vector<uint8_t> &&data) : data_(std::move(data)) {}
 
-QuickValue createBooleanQuickValue(bool value)
-{
-  return QuickValue{
-    .dataType = BOOLEAN,
-    .booleanValue = int(value)};
-}
+  size_t size() const override
+  {
+    return data_.size();
+  }
 
-QuickValue createTextQuickValue(string value)
-{
-  return QuickValue{
-    .dataType = TEXT,
-    .textValue = value};
-}
+  uint8_t *data() override
+  {
+    return data_.data();
+  }
 
-QuickValue createIntegerQuickValue(int value)
-{
-  return QuickValue{
-    .dataType = INTEGER,
-    .doubleOrIntValue = static_cast<double>(value)};
-}
+private:
+  std::vector<uint8_t> data_;
+};
 
-QuickValue createIntegerQuickValue(double value)
+jsi::Value makeArrayBuffer(jsi::Runtime &rt, std::vector<uint8_t> &&blob)
 {
-  return QuickValue{
-    .dataType = INTEGER,
-    .doubleOrIntValue = value};
+  // A zero-length ArrayBuffer is valid and its data() pointer is unused, so the
+  // nullptr a default-constructed vector may return is fine here.
+  return jsi::Value(rt, jsi::ArrayBuffer(rt, std::make_shared<VectorBuffer>(std::move(blob))));
 }
-
-QuickValue createInt64QuickValue(long long value)
-{
-  return QuickValue{
-    .dataType = INT64,
-    .int64Value = value};
-}
-
-QuickValue createDoubleQuickValue(double value)
-{
-  return QuickValue{
-    .dataType = DOUBLE,
-    .doubleOrIntValue = value};
-}
-
-QuickValue createArrayBufferQuickValue(uint8_t *arrayBufferValue, size_t arrayBufferSize)
-{
-  return QuickValue{
-    .dataType = ARRAY_BUFFER,
-    .arrayBufferValue = shared_ptr<uint8_t>{arrayBufferValue},
-    .arrayBufferSize = arrayBufferSize};
-}
+} // namespace
 
 void jsiQueryArgumentsToSequelParam(jsi::Runtime &rt, jsi::Value const &params, vector<QuickValue> *target)
 {
@@ -74,41 +53,39 @@ void jsiQueryArgumentsToSequelParam(jsi::Runtime &rt, jsi::Value const &params, 
   }
 
   jsi::Array values = params.asObject(rt).asArray(rt);
+  size_t len = values.length(rt);
+  target->reserve(len);
 
-  for (int ii = 0; ii < values.length(rt); ii++)
+  for (size_t ii = 0; ii < len; ii++)
   {
-
     jsi::Value value = values.getValueAtIndex(rt, ii);
     if (value.isNull() || value.isUndefined())
     {
-      target->push_back(createNullQuickValue());
+      target->emplace_back(std::monostate{});
     }
     else if (value.isBool())
     {
-      target->push_back(createBooleanQuickValue(value.getBool()));
+      target->emplace_back(static_cast<int64_t>(value.getBool() ? 1 : 0));
     }
     else if (value.isNumber())
     {
-      double doubleVal = value.asNumber();
-      int intVal = (int)doubleVal;
-      long long longVal = (long)doubleVal;
-      if (intVal == doubleVal)
+      double d = value.asNumber();
+      // 2^53: the largest range where every integer is exactly representable as a
+      // double. Outside it (and for NaN/Infinity) `(int64_t)d` would be UB, so
+      // those are bound as REAL instead.
+      constexpr double kMaxSafe = 9007199254740992.0;
+      if (std::isfinite(d) && std::trunc(d) == d && d >= -kMaxSafe && d <= kMaxSafe)
       {
-        target->push_back(createIntegerQuickValue(intVal));
-      }
-      else if (longVal == doubleVal)
-      {
-        target->push_back(createInt64QuickValue(longVal));
+        target->emplace_back(static_cast<int64_t>(d));
       }
       else
       {
-        target->push_back(createDoubleQuickValue(doubleVal));
+        target->emplace_back(d);
       }
     }
     else if (value.isString())
     {
-      string strVal = value.asString(rt).utf8(rt);
-      target->push_back(createTextQuickValue(strVal));
+      target->emplace_back(value.asString(rt).utf8(rt));
     }
     else if (value.isObject())
     {
@@ -116,92 +93,150 @@ void jsiQueryArgumentsToSequelParam(jsi::Runtime &rt, jsi::Value const &params, 
       if (obj.isArrayBuffer(rt))
       {
         auto buf = obj.getArrayBuffer(rt);
-        target->push_back(createArrayBufferQuickValue(buf.data(rt), buf.size(rt)));
+        // Copy: the JS ArrayBuffer may be collected while the statement is alive.
+        const uint8_t *data = buf.data(rt);
+        target->emplace_back(std::vector<uint8_t>(data, data + buf.size(rt)));
+      }
+      else
+      {
+        // Any other object is dropped entirely, which shifts every later
+        // parameter by one. That is long-standing behaviour, pinned by a
+        // behaviour-lock test; fixing it here would change what queries see.
       }
     }
     else
     {
-      target->push_back(createNullQuickValue());
+      target->emplace_back(std::monostate{});
     }
   }
 }
 
-jsi::Value createSequelQueryExecutionResult(jsi::Runtime &rt, SQLiteOPResult status, vector<map<string, QuickValue>> *results, vector<QuickColumnMetadata> *metadata)
+jsi::Value createSequelQueryExecutionResult(jsi::Runtime &rt, SQLiteOPResult status, QueryRows *results, vector<QuickColumnMetadata> *metadata)
 {
-  if(status.type == SQLiteError) {
+  if (status.type == SQLiteError)
+  {
     throw std::invalid_argument(status.errorMessage);
   }
 
   jsi::Object res = jsi::Object(rt);
 
-  res.setProperty(rt, "rowsAffected", jsi::Value(status.rowsAffected));
+  jsi::PropNameID rowsAffectedName = jsi::PropNameID::forAscii(rt, "rowsAffected");
+  jsi::PropNameID insertIdName = jsi::PropNameID::forAscii(rt, "insertId");
+  jsi::PropNameID rowsName = jsi::PropNameID::forAscii(rt, "rows");
+  jsi::PropNameID arrayName = jsi::PropNameID::forAscii(rt, "_array");
+  jsi::PropNameID lengthName = jsi::PropNameID::forAscii(rt, "length");
+  jsi::PropNameID metadataName = jsi::PropNameID::forAscii(rt, "metadata");
+
+  res.setProperty(rt, rowsAffectedName, jsi::Value(status.rowsAffected));
   if (status.rowsAffected > 0 && status.insertId != 0)
   {
-    res.setProperty(rt, "insertId", jsi::Value(status.insertId));
+    res.setProperty(rt, insertIdName, jsi::Value(status.insertId));
   }
 
-  // Converting row results into objects
-  size_t rowCount = results->size();
+  // The JS object keys must stay in alphabetical order with the last duplicate
+  // winning, exactly like the std::map this replaced. Compute that order once per
+  // query (not per row) and reuse it for every row.
+  const vector<string> &columnNames = results->columnNames;
+  vector<size_t> order(columnNames.size());
+  for (size_t i = 0; i < order.size(); i++)
+  {
+    order[i] = i;
+  }
+  std::stable_sort(order.begin(), order.end(), [&columnNames](size_t a, size_t b) {
+    return columnNames[a] < columnNames[b];
+  });
+  // For duplicate names the last column wins, so keep only the highest index of
+  // each run of equal names.
+  {
+    vector<size_t> deduped;
+    deduped.reserve(order.size());
+    for (size_t i = 0; i < order.size(); i++)
+    {
+      if (i + 1 < order.size() && columnNames[order[i]] == columnNames[order[i + 1]])
+      {
+        continue;
+      }
+      deduped.push_back(order[i]);
+    }
+    order.swap(deduped);
+  }
+
+  // Build the property names once per statement, not once per cell.
+  vector<jsi::PropNameID> names;
+  names.reserve(order.size());
+  for (size_t index : order)
+  {
+    names.push_back(jsi::PropNameID::forUtf8(rt, columnNames[index]));
+  }
+
+  size_t rowCount = results->rows.size();
   jsi::Object rows = jsi::Object(rt);
   if (rowCount > 0)
   {
     auto array = jsi::Array(rt, rowCount);
-    for (int i = 0; i < rowCount; i++)
+    for (size_t i = 0; i < rowCount; i++)
     {
+      vector<QuickValue> &row = results->rows[i];
       jsi::Object rowObject = jsi::Object(rt);
-      auto row = results->at(i);
-      for (auto const &entry : row)
+      for (size_t n = 0; n < names.size(); n++)
       {
-        std::string columnName = entry.first;
-        QuickValue value = entry.second;
-        if (value.dataType == TEXT)
+        size_t c = order[n];
+        if (c >= row.size())
         {
-          // using value.textValue (std::string) directly allows jsi::String to use length property of std::string (allowing strings with NULLs in them like SQLite does)
-          rowObject.setProperty(rt, columnName.c_str(), jsi::String::createFromUtf8(rt, value.textValue));
+          continue;
         }
-        else if (value.dataType == INTEGER)
+        QuickValue &value = row[c];
+        if (const std::string *text = std::get_if<std::string>(&value))
         {
-          rowObject.setProperty(rt, columnName.c_str(), jsi::Value(value.doubleOrIntValue));
+          // Using the std::string overload of createFromUtf8 keeps the length,
+          // so strings with embedded NULLs survive the round trip.
+          rowObject.setProperty(rt, names[n], jsi::String::createFromUtf8(rt, *text));
         }
-        else if (value.dataType == DOUBLE)
+        else if (const int64_t *integer = std::get_if<int64_t>(&value))
         {
-          rowObject.setProperty(rt, columnName.c_str(), jsi::Value(value.doubleOrIntValue));
+          // JS cannot represent the full int64 range; a double keeps every
+          // integer up to 2^53 exactly, which is more than the old 32-bit int.
+          rowObject.setProperty(rt, names[n], jsi::Value(static_cast<double>(*integer)));
         }
-        else if (value.dataType == ARRAY_BUFFER)
+        else if (const double *real = std::get_if<double>(&value))
         {
-          jsi::Function array_buffer_ctor = rt.global().getPropertyAsFunction(rt, "ArrayBuffer");
-          jsi::Object o = array_buffer_ctor.callAsConstructor(rt, (int)value.arrayBufferSize).getObject(rt);
-          jsi::ArrayBuffer buf = o.getArrayBuffer(rt);
-          // It's a shame we have to copy here: see https://github.com/facebook/hermes/pull/419 and https://github.com/facebook/hermes/issues/564.
-          memcpy(buf.data(rt), value.arrayBufferValue.get(), value.arrayBufferSize);
-          rowObject.setProperty(rt, columnName.c_str(), o);
+          rowObject.setProperty(rt, names[n], jsi::Value(*real));
+        }
+        else if (std::vector<uint8_t> *blob = std::get_if<std::vector<uint8_t>>(&value))
+        {
+          // Move the bytes into the ArrayBuffer instead of copying them again.
+          rowObject.setProperty(rt, names[n], makeArrayBuffer(rt, std::move(*blob)));
         }
         else
         {
-          rowObject.setProperty(rt, columnName.c_str(), jsi::Value(nullptr));
+          rowObject.setProperty(rt, names[n], jsi::Value(nullptr));
         }
       }
       array.setValueAtIndex(rt, i, move(rowObject));
     }
-    rows.setProperty(rt, "_array", move(array));
-    res.setProperty(rt, "rows", move(rows));
+    rows.setProperty(rt, arrayName, move(array));
+    res.setProperty(rt, rowsName, move(rows));
   }
 
-  if(metadata != NULL)
+  if (metadata != NULL)
   {
     size_t column_count = metadata->size();
     auto column_array = jsi::Array(rt, column_count);
-    for (int i = 0; i < column_count; i++) {
-      auto column = metadata->at(i);
+    jsi::PropNameID columnNameName = jsi::PropNameID::forAscii(rt, "columnName");
+    jsi::PropNameID columnDeclaredTypeName = jsi::PropNameID::forAscii(rt, "columnDeclaredType");
+    jsi::PropNameID columnIndexName = jsi::PropNameID::forAscii(rt, "columnIndex");
+    for (size_t i = 0; i < column_count; i++)
+    {
+      auto &column = metadata->at(i);
       jsi::Object column_object = jsi::Object(rt);
-      column_object.setProperty(rt, "columnName", jsi::String::createFromUtf8(rt, column.colunmName.c_str()));
-      column_object.setProperty(rt, "columnDeclaredType", jsi::String::createFromUtf8(rt, column.columnDeclaredType.c_str()));
-      column_object.setProperty(rt, "columnIndex", jsi::Value(column.columnIndex));
+      column_object.setProperty(rt, columnNameName, jsi::String::createFromUtf8(rt, column.columnName.c_str()));
+      column_object.setProperty(rt, columnDeclaredTypeName, jsi::String::createFromUtf8(rt, column.columnDeclaredType.c_str()));
+      column_object.setProperty(rt, columnIndexName, jsi::Value(column.columnIndex));
       column_array.setValueAtIndex(rt, i, move(column_object));
     }
-    res.setProperty(rt, "metadata", move(column_array));
+    res.setProperty(rt, metadataName, move(column_array));
   }
-  rows.setProperty(rt, "length", jsi::Value((int)rowCount));
+  rows.setProperty(rt, lengthName, jsi::Value((int)rowCount));
 
   return move(res);
 }

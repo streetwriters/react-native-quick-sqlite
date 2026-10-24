@@ -1,3 +1,6 @@
+#ifndef bindings_h
+#define bindings_h
+
 #include <jsi/jsilib.h>
 #include <jsi/jsi.h>
 #include <ReactCommon/CallInvoker.h>
@@ -9,3 +12,5 @@ void install(jsi::Runtime &rt, std::shared_ptr<react::CallInvoker> jsCallInvoker
 void clearState();
 }
 
+
+#endif /* bindings_h */

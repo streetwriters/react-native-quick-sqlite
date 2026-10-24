@@ -3,88 +3,127 @@
 */
 #include "sqlbatchexecutor.h"
 
+static void pushCommand(jsi::Runtime &rt, const string &query, const jsi::Value &params, vector<QuickQueryArguments> *commands)
+{
+  auto values = make_shared<vector<QuickValue>>();
+  jsiQueryArgumentsToSequelParam(rt, params, values.get());
+  commands->push_back(QuickQueryArguments{query, std::move(values)});
+}
+
 void jsiBatchParametersToQuickArguments(jsi::Runtime &rt, jsi::Array const &batchParams, vector<QuickQueryArguments> *commands)
 {
-  for (int i = 0; i < batchParams.length(rt); i++)
+  size_t length = batchParams.length(rt);
+  for (size_t i = 0; i < length; i++)
   {
-    const jsi::Array &command = batchParams.getValueAtIndex(rt, i).asObject(rt).asArray(rt);
-    if (command.length(rt) == 0)
+    jsi::Array command = batchParams.getValueAtIndex(rt, i).asObject(rt).asArray(rt);
+    size_t commandLength = command.length(rt);
+    if (commandLength == 0)
     {
       continue;
     }
 
-    const string query = command.getValueAtIndex(rt, 0).asString(rt).utf8(rt);
-    const jsi::Value &commandParams = command.length(rt) > 1 ? command.getValueAtIndex(rt, 1) : jsi::Value::undefined();
-    if (!commandParams.isUndefined() && commandParams.asObject(rt).isArray(rt) && commandParams.asObject(rt).asArray(rt).length(rt) > 0 && commandParams.asObject(rt).asArray(rt).getValueAtIndex(rt, 0).isObject())
+    string query = command.getValueAtIndex(rt, 0).asString(rt).utf8(rt);
+    jsi::Value params = commandLength > 1 ? command.getValueAtIndex(rt, 1) : jsi::Value::undefined();
+    if (params.isUndefined())
     {
-      // This arguments is an array of arrays, like a batch update of a single sql command.
-      const jsi::Array &batchUpdateParams = commandParams.asObject(rt).asArray(rt);
-      for (int x = 0; x < batchUpdateParams.length(rt); x++)
+      pushCommand(rt, query, params, commands);
+      continue;
+    }
+
+    jsi::Object paramsObject = params.asObject(rt);
+    if (paramsObject.isArray(rt))
+    {
+      jsi::Array paramsArray = paramsObject.asArray(rt);
+      size_t paramsLength = paramsArray.length(rt);
+      // An array of arrays is a batch update: one command per inner array.
+      if (paramsLength > 0 && paramsArray.getValueAtIndex(rt, 0).isObject())
       {
-        const jsi::Value &p = batchUpdateParams.getValueAtIndex(rt, x);
-        vector<QuickValue> params;
-        jsiQueryArgumentsToSequelParam(rt, p, &params);
-        commands->push_back(QuickQueryArguments{
-          query,
-          make_shared<vector<QuickValue>>(params)
-        });
+        for (size_t x = 0; x < paramsLength; x++)
+        {
+          pushCommand(rt, query, paramsArray.getValueAtIndex(rt, x), commands);
+        }
+        continue;
       }
     }
-    else
-    {
-      vector<QuickValue> params;
-      jsiQueryArgumentsToSequelParam(rt, commandParams, &params);
-      commands->push_back(QuickQueryArguments{
-        query,
-        make_shared<vector<QuickValue>>(params)
-      });
-    }
+    pushCommand(rt, query, params, commands);
   }
 }
 
 SequelBatchOperationResult sqliteExecuteBatch(std::string dbName, vector<QuickQueryArguments> *commands)
 {
-  size_t commandCount = commands->size();
-  if(commandCount <= 0)
+  if (commands->empty())
   {
-    return SequelBatchOperationResult {
-      .type = SQLiteError,
-      .message = "No SQL commands provided",
-    };
+    return {SQLiteError, "No SQL commands provided", 0, 0};
   }
 
-  try 
-  {
+  int commandCount = (int)commands->size();
+  SequelBatchOperationResult result{SQLiteError, "[react-native-quick-sqlite]: Database " + dbName + " is not open", 0, 0};
+
+  // One lock for the whole transaction, so nothing interleaves between BEGIN and COMMIT.
+  withConnection(dbName, [&](sqlite3 *db) {
     int affectedRows = 0;
-    sqliteExecuteLiteral(dbName, "BEGIN EXCLUSIVE TRANSACTION");
-    for(int i = 0; i<commandCount; i++) {
-      auto command = commands->at(i);
-      // We do not provide a datastructure to receive query data because we don't need/want to handle this results in a batch execution
-      auto result = sqliteExecute(dbName, command.sql, command.params.get(), NULL, NULL);
-      if(result.type == SQLiteError)
+
+    string error = runInTransaction(db, "batch", [&]() -> string {
+      // Consecutive commands with the same SQL reuse one prepared statement: a
+      // batch of 10 000 rows normally has a single distinct statement. Only the
+      // first statement of each SQL string runs; the tail is ignored.
+      sqlite3_stmt *statement = nullptr;
+      const string *statementSql = nullptr;
+      string failure;
+
+      for (const auto &command : *commands)
       {
-        sqliteExecuteLiteral(dbName, "ROLLBACK");
-        return SequelBatchOperationResult {
-          .type = SQLiteError,
-          .message = result.errorMessage,
-        };
-      } else 
-      {
-        affectedRows += result.rowsAffected;
+        if (statement != nullptr && *statementSql == command.sql)
+        {
+          sqlite3_reset(statement);
+          sqlite3_clear_bindings(statement);
+        }
+        else
+        {
+          sqlite3_finalize(statement);
+          statement = nullptr;
+          if (sqlite3_prepare_v2(db, command.sql.c_str(), (int)command.sql.size(), &statement, nullptr) != SQLITE_OK || statement == nullptr)
+          {
+            failure = "[react-native-quick-sqlite] SQL execution error: " + string(sqlite3_errmsg(db));
+            break;
+          }
+          statementSql = &command.sql;
+        }
+
+        if (command.params != nullptr && !command.params->empty())
+        {
+          // Bind failures are ignored, exactly as `execute` ignores them.
+          bindStatement(statement, command.params.get());
+        }
+
+        int status;
+        while ((status = sqlite3_step(statement)) == SQLITE_ROW)
+        {
+        }
+        if (status != SQLITE_DONE)
+        {
+          failure = "[react-native-quick-sqlite] SQL execution error: " + string(sqlite3_errmsg(db));
+          break;
+        }
+        // Each statement's own count, as always: sqlite3_total_changes would
+        // also count rows changed by triggers. Pinned by a behaviour test.
+        affectedRows += sqlite3_changes(db);
       }
+
+      // Finalize before COMMIT/ROLLBACK so the statement holds no lock.
+      sqlite3_finalize(statement);
+      return failure;
+    });
+
+    if (error.empty())
+    {
+      result = {SQLiteOk, "", affectedRows, commandCount};
     }
-    sqliteExecuteLiteral(dbName, "COMMIT");
-    return SequelBatchOperationResult {
-      .type = SQLiteOk,
-      .affectedRows = affectedRows,
-      .commands = (int) commandCount,
-    };
-  } catch(std::exception &exc)
-  {
-    sqliteExecuteLiteral(dbName, "ROLLBACK");
-    return SequelBatchOperationResult {
-      .type = SQLiteError,
-      .message = exc.what(),
-    };
-  }
+    else
+    {
+      result = {SQLiteError, error, 0, commandCount};
+    }
+  });
+
+  return result;
 }

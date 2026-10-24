@@ -8,50 +8,37 @@
 #ifndef JSIHelper_h
 #define JSIHelper_h
 
-#include <stdio.h>
+#include <cstdint>
+#include <string>
+#include <variant>
+#include <vector>
+
 #include <jsi/jsilib.h>
 #include <jsi/jsi.h>
-#include <vector>
-#include <map>
 
 using namespace std;
 using namespace facebook;
 
 /**
- * Enum for QuickValue to store/determine correct type for dynamic JSI values
+ * A single SQLite value: NULL, integer, real, text or blob.
+ *
+ * This owns its data. Text is a std::string (so it can hold embedded NULs) and
+ * blobs are a std::vector<uint8_t> copy of the source bytes — the old struct
+ * kept a raw pointer to JS-owned memory and freed it with `delete`, which
+ * corrupted the heap for every blob parameter.
  */
-enum QuickDataType
-{
-  NULL_VALUE,
-  TEXT,
-  INTEGER,
-  INT64,
-  DOUBLE,
-  BOOLEAN,
-  ARRAY_BUFFER,
-};
+using QuickValue = std::variant<std::monostate, int64_t, double, std::string, std::vector<uint8_t>>;
 
 /**
- * Wrapper struct to allocate dynamic JSI values to static C++ primitives
+ * Rows of a SELECT, stored by column index rather than as a map per row.
+ *
+ * Column names are collected once per statement (not once per row), and building
+ * a std::map per row is what used to dominate `select 10k rows`.
  */
-struct QuickValue
+struct QueryRows
 {
-  QuickDataType dataType;
-  int booleanValue;
-  double doubleOrIntValue;
-  long long int64Value;
-  string textValue;
-  shared_ptr<uint8_t> arrayBufferValue;
-  size_t arrayBufferSize;
-};
-
-/**
- * Helper struct to carry SQLite results between entities
- */
-struct QuickColumnValue
-{
-  QuickValue value;
-  string columnName;
+  vector<string> columnNames;
+  vector<vector<QuickValue>> rows;
 };
 
 /**
@@ -67,8 +54,8 @@ struct SQLiteOPResult
 {
   ResultType type;
   string errorMessage;
-  int rowsAffected;
-  double insertId;
+  int rowsAffected = 0;
+  double insertId = 0;
 };
 
 struct SequelLiteralUpdateResult
@@ -91,7 +78,7 @@ struct SequelBatchOperationResult
  */
 struct QuickColumnMetadata
 {
-  string colunmName;
+  string columnName;
   int columnIndex;
   string columnDeclaredType;
 };
@@ -101,14 +88,11 @@ struct QuickColumnMetadata
  * */
 void jsiQueryArgumentsToSequelParam(jsi::Runtime &rt, jsi::Value const &args, vector<QuickValue> *target);
 
-QuickValue createNullQuickValue();
-QuickValue createBooleanQuickValue(bool value);
-QuickValue createTextQuickValue(string value);
-QuickValue createIntegerQuickValue(int value);
-QuickValue createIntegerQuickValue(double value);
-QuickValue createInt64QuickValue(long long value);
-QuickValue createDoubleQuickValue(double value);
-QuickValue createArrayBufferQuickValue(uint8_t *arrayBufferValue, size_t arrayBufferSize);
-jsi::Value createSequelQueryExecutionResult(jsi::Runtime &rt, SQLiteOPResult status, vector<map<string, QuickValue>> *results, vector<QuickColumnMetadata> *metadata);
+/**
+ * Converts a SQLiteOPResult plus the collected rows/metadata into the JS object
+ * `{ rowsAffected, insertId?, rows: { _array, length }, metadata? }`.
+ * Throws std::invalid_argument when `status.type == SQLiteError`.
+ */
+jsi::Value createSequelQueryExecutionResult(jsi::Runtime &rt, SQLiteOPResult status, QueryRows *results, vector<QuickColumnMetadata> *metadata);
 
 #endif /* JSIHelper_h */

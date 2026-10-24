@@ -1,54 +1,57 @@
 /**
  * SQL File Loader implementation
+ *
+ * Each non-empty line is executed as one statement, so a statement may not span
+ * lines and only the first statement on a line runs. That behaviour is pinned by
+ * tests. The whole import runs in one transaction under one connection lock.
 */
 #include "sqlfileloader.h"
-#include <iostream>
 #include <fstream>
 
 using namespace std;
 
 SequelBatchOperationResult importSQLFile(string dbName, string fileLocation)
 {
-  string line;
   ifstream sqFile(fileLocation);
-  if (sqFile.is_open())
-  {
-    try
-    {
-      int affectedRows = 0;
-      int commands = 0;
-      sqliteExecuteLiteral(dbName, "BEGIN EXCLUSIVE TRANSACTION");
-      while (std::getline(sqFile, line, '\n'))
-      {
-        if (!line.empty())
-        {
-          SequelLiteralUpdateResult result = sqliteExecuteLiteral(dbName, line);
-          if (result.type == SQLiteError)
-          {
-            sqliteExecuteLiteral(dbName, "ROLLBACK");
-            sqFile.close();
-            return {SQLiteError, result.message, 0, commands};
-          }
-          else
-          {
-            affectedRows += result.affectedRows;
-            commands++;
-          }
-        }
-      }
-      sqFile.close();
-      sqliteExecuteLiteral(dbName, "COMMIT");
-      return {SQLiteOk, "", affectedRows, commands};
-    }
-    catch (...)
-    {
-      sqFile.close();
-      sqliteExecuteLiteral(dbName, "ROLLBACK");
-      return {SQLiteError, "[react-native-quick-sqlite][loadSQLFile] Unexpected error, transaction was rolledback", 0, 0};
-    }
-  }
-  else
+  if (!sqFile.is_open())
   {
     return {SQLiteError, "[react-native-quick-sqlite][loadSQLFile] Could not open file", 0, 0};
   }
+
+  SequelBatchOperationResult result{SQLiteError, "[react-native-quick-sqlite] Database not opened: " + dbName, 0, 0};
+
+  withConnection(dbName, [&](sqlite3 *db) {
+    int affectedRows = 0;
+    int commands = 0;
+
+    string error = runInTransaction(db, "import", [&]() -> string {
+      string line;
+      while (getline(sqFile, line))
+      {
+        if (line.empty())
+        {
+          continue;
+        }
+        auto lineResult = executeLiteralOnDb(db, line);
+        if (lineResult.type == SQLiteError)
+        {
+          return lineResult.message;
+        }
+        affectedRows += lineResult.affectedRows;
+        commands++;
+      }
+      return "";
+    });
+
+    if (error.empty())
+    {
+      result = {SQLiteOk, "", affectedRows, commands};
+    }
+    else
+    {
+      result = {SQLiteError, error, 0, commands};
+    }
+  });
+
+  return result;
 }

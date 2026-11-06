@@ -24,6 +24,8 @@
     "lib",
     "android",
     "ios",
+    "desktop",
+    "react-native.config.js",
     "cpp",
     "better-trigram",
     "sqlite3-fts5-html",
@@ -140,5 +142,10 @@
         }
       ]
     ]
+  },
+  "codegenConfig": {
+    "name": "QuickSQLiteSpec",
+    "type": "modules",
+    "jsSrcsDir": "desktop/specs"
   }
 }

@@ -26,6 +26,7 @@
     "ios",
     "desktop",
     "react-native.config.js",
+    "CHANGELOG.md",
     "cpp",
     "better-trigram",
     "sqlite3-fts5-html",

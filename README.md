@@ -23,6 +23,10 @@ In addition to standard `react-native-quick-sqlite` capabilities, this distribut
 npm install github:streetwriters/react-native-quick-sqlite
 ```
 
+## Desktop (react-native-gpui)
+
+On desktop the library runs on [react-native-gpui](https://github.com/streetwriters/react-native-gpui) and is autolinked. A database opened without a `location` is created in the app's own folder, `<app data>/<app id>/databases`, where `<app data>` is `~/Library/Application Support` on macOS, `%APPDATA%` on Windows and `$XDG_DATA_HOME` (`~/.local/share`) on Linux, and the app id is `RN_GPUI_APP_ID` or, without it, the name of the executable. This is the folder `paths.appData` of `@react-native-gpui/fs` names, so two apps never share a database. An explicit `location` is appended to that folder as on mobile, and `RN_GPUI_APP_DATA_DIR` replaces the whole folder. Databases that an earlier version created in the shared `QuickSQLite` folder are not moved.
+
 ## Example App
 
 An example application using React Native 0.82.1 is available in the [`example/`](./example) directory to run and test all library features.

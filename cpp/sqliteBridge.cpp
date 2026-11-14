@@ -11,6 +11,12 @@
 #include <cerrno>
 #include <cstring>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>
+#ifndef S_ISDIR
+#define S_ISDIR(mode) (((mode) & _S_IFMT) == _S_IFDIR)
+#endif
+#endif
 
 using namespace std;
 using namespace facebook;
@@ -76,9 +82,14 @@ static bool ensureDirectory(const string &path)
   }
   // mkdir failures are ignored on purpose: a sandboxed container may report
   // EACCES/EPERM for a parent that exists. Only the final check decides.
-  for (size_t slash = path.find('/', 1);; slash = path.find('/', slash + 1))
+  for (size_t slash = path.find_first_of("/\\", 1);;
+       slash = path.find_first_of("/\\", slash + 1))
   {
+#ifdef _WIN32
+    ::_mkdir(path.substr(0, slash).c_str());
+#else
     ::mkdir(path.substr(0, slash).c_str(), 0755);
+#endif
     if (slash == string::npos)
     {
       break;

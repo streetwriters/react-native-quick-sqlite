@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Desktop: builds on Windows. Creating the database folder no longer uses POSIX-only `mkdir` and `S_ISDIR`, and accepts `\` separators.
+
 ## 8.3.0
 
 - Add desktop support on react-native-gpui.
